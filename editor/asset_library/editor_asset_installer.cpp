@@ -671,7 +671,12 @@ void EditorAssetInstaller::_notification(int p_what) {
 					// Mark C# support as unavailable.
 					extension_icon_map["cs"] = get_editor_theme_icon(SNAME("ImportFail"));
 				}
-
+				if (ClassDB::class_exists("CppScript")) {
+					extension_icon_map["cpp"] = get_editor_theme_icon(SNAME("CppScript"));
+				} else {
+					// Mark C++ support as unavailable.
+					extension_icon_map["cs"] = get_editor_theme_icon(SNAME("ImportFail"));
+				}
 				extension_icon_map["res"] = get_editor_theme_icon(SNAME("Resource"));
 				extension_icon_map["tres"] = get_editor_theme_icon(SNAME("Resource"));
 				extension_icon_map["atlastex"] = get_editor_theme_icon(SNAME("AtlasTexture"));
