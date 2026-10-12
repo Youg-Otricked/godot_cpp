@@ -1,0 +1,2 @@
+fix res relative path being passed to clang -> test -> test -> do stuff i am forgetting if i am forgetting it -> test -> test -> make some movement to test -> editor
+integration.

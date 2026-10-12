@@ -93,7 +93,7 @@ protected:
 
 		String source = String::utf8(reinterpret_cast<const char *>(file.ptr()), file.size());
 		// compress
-		// add_file(p_path.get_basename() + ".cpp", file, true);
+		//add_file(p_path.get_basename() + ".cpp", file, true);
 	}
 
 public:

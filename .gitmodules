@@ -1,0 +1,6 @@
+[submodule "thirdparty/modules/clang/thirdparty/godot-cpp"]
+	path = thirdparty/modules/clang/thirdparty/godot-cpp
+	url = https://github.com/godotengine/godot-cpp
+[submodule "modules/clang/thirdparty/godot-cpp"]
+	path = modules/clang/thirdparty/godot-cpp
+	url = https://github.com/godotengine/godot-cpp

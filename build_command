@@ -1,0 +1,1 @@
+scons platform=linuxbsd target=editor   module_clang_enabled=yes   debug_symbols=yes   optimize=none

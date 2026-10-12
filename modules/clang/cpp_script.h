@@ -32,13 +32,15 @@
 
 #include "core/doc_data.h"
 #include "core/object/script_language.h"
+#include "core/os/os.h"
 
 #ifdef TOOLS_ENABLED
 #include "core/io/resource_loader.h"
 #include "core/object/editor_language.h"
 #include "editor/plugins/editor_plugin.h"
-
+#include "editor/script_templates/templates.gen.h"
 #endif
+#include "scene/resources/packed_scene.h"
 
 class CppScript;
 class CppInstance;
@@ -56,7 +58,6 @@ class CppScriptInstance : public ScriptInstance {
 	friend class CppLanguage;
 	Ref<CppScript> script;
 	Object *owner = nullptr;
-
 public:
 	bool set(const StringName &, const Variant &) override;
 	bool get(const StringName &, Variant &) const override;
@@ -74,14 +75,15 @@ public:
 	void notification(int, bool = false) override;
 	Ref<Script> get_script() const override;
 	ScriptLanguage *get_language() override;
-	CppScriptInstance(const Ref<CppScript> &p_script, Object *p_owner);
-	~CppScriptInstance() override = default;
+	CppScriptInstance(const Ref<CppScript> &p_script);
 };
 class CppLanguage : public ScriptLanguage {
 	GDCLASS(CppLanguage, ScriptLanguage);
 	friend class CppScript;
 	friend class CppScriptInstance;
 	static CppLanguage *singleton;
+	Mutex mutex;
+	SelfList<CppScript>::List script_list;
 
 public:
 	_FORCE_INLINE_ static CppLanguage *get_singleton() {
@@ -99,8 +101,9 @@ public:
 	Vector<String> get_doc_comment_delimiters() const override;
 	Vector<String> get_string_delimiters() const override;
 	bool supports_builtin_mode() const override;
+	bool is_using_templates() override;
 	String make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const override;
-	void add_global_constant(const StringName &p_variable, const Variant &p_value) override;
+	/* TODO */ void add_global_constant(const StringName &p_variable, const Variant &p_value) override {}
 	void add_named_global_constant(const StringName &p_name, const Variant &p_value) override {}
 	void remove_named_global_constant(const StringName &p_name) override {}
 	String debug_get_error() const override { return String(); }
@@ -114,15 +117,16 @@ public:
 	void debug_get_globals(List<String> *r_globals, List<Variant> *r_values, int p_max_subitems = -1, int p_max_depth = -1) override {}
 	String debug_parse_stack_level_expression(int p_level, const String &p_expression, int p_max_subitems = -1, int p_max_depth = -1) override {}
 	Vector<StackInfo> debug_get_current_stack_info() override { return Vector<StackInfo>(); }
+	void profiling_start() override {}
+	void profiling_stop() override {}
+	void profiling_set_save_native_calls(bool p_enable) override {}
 	void reload_all_scripts() override;
 	void reload_scripts(const Array &p_scripts) override;
 	void reload_tool_script(const Ref<Script> &p_script) override;
 	void get_public_functions(List<MethodInfo> *r_functions) const override;
 	void get_public_constants(List<Pair<String, Variant>> *r_constants) const override;
 	void get_public_annotations(List<MethodInfo> *r_annotations) const override;
-	void profiling_start() override {}
-	void profiling_stop() override {}
-	void profiling_set_save_native_calls(bool p_enable) override {}
+
 #ifdef TOOLS_ENABLED
 	EditorLanguage editor_language;
 	virtual EditorLanguage *get_editor_language() override {
@@ -135,27 +139,50 @@ public:
 	int profiling_get_frame_data(ProfilingInfo *, int) override {
 		return 0;
 	}
-	bool is_using_templates() override { return false; }
-	Vector<ScriptTemplate> get_built_in_templates(const StringName &) override {
-		return {};
-	}
+	virtual Vector<ScriptTemplate> get_built_in_templates(const StringName &p_object) override;
 	String validate_path(const String &) const override {
 		return String();
 	}
+	HashMap<String, String> built_hashes;
 	CppLanguage();
 	~CppLanguage() override;
+	void _load_prebuilt_extensions();
 };
+
 class CppScript : public Script {
+	uint64_t _built_hash = 0;
+	bool _is_reloading = false;
+	friend class CppScriptInstance;
+	friend class CppScriptLanguage;
 	GDCLASS(CppScript, Script);
 	bool _is_abstract = false;
 	bool tool = false;
-	bool valid = false;
 	bool path_valid = false;
+	bool valid = true;
+	void _fix_node_type(ObjectID p_id);
+	bool _swap_child(Node *p_old);
+#ifdef TOOLS_ENABLED
+	bool _swap_edited_root(Node *p_old);
+#endif
+	StringName registered_class;
 	String source;
+	String cname;
+	String header_source;
+	String header_path;
 	String path;
+	String gdextension_source;
 	CppScript *_owner = nullptr; //for subclasses
+	Ref<CppScript> base_script;
+	StringName global_name;
+	Ref<CppScript> base;
+	void *library_handle = nullptr;
+	String bindings_source;
+	SelfList<CppScript> script_list;
 
 public:
+	void build_compile_arguments(const String &p_source, const String &p_output, List<String> &r_args) const;
+	CppScriptInstance *_create_instance(const Variant **p_args, int p_argcount, Object *p_owner, Callable::CallError &r_error);
+	Ref<CppScript> get_base() const { return base; }
 	CppScript *get_root_script();
 	bool is_root_script() const { return _owner == nullptr; }
 	virtual bool can_instantiate() const override;
@@ -166,6 +193,15 @@ public:
 	virtual ScriptInstance *instance_create(Object *p_this) override;
 	virtual bool has_source_code() const override;
 	virtual String get_source_code() const override;
+	bool has_header_code() const;
+	String get_header_code() const;
+	bool has_bindings_source() const { return !bindings_source.is_empty(); }
+	bool has_gdextension_source() const { return !gdextension_source.is_empty(); }
+	String get_bindings_source() const { return bindings_source; }
+	void set_bindings_source(const String &p_code) { bindings_source = p_code; }
+	void set_gdextension_source(const String &p_code) { gdextension_source = p_code; }
+	String get_gdextension_source() const { return gdextension_source; }
+	void set_header_code(const String &p_code);
 	virtual void set_source_code(const String &p_code) override;
 	virtual void update_exports() override;
 	virtual Error reload(bool p_keep_state = false) override;
@@ -174,6 +210,8 @@ public:
 	String get_script_path() const;
 	Error load_source_code(const String &p_path);
 	bool get_property_default_value(const StringName &p_property, Variant &r_value) const override;
+	bool _update_exports(PlaceHolderScriptInstance *p_instance_to_update = nullptr);
+
 #ifdef TOOLS_ENABLED
 	StringName get_doc_class_name() const override { return StringName(); }
 	Vector<DocData::ClassDoc> get_documentation() const override { return {}; }
@@ -195,8 +233,13 @@ public:
 	virtual void get_script_signal_list(List<MethodInfo> *r_signals) const override;
 	bool is_tool() const override { return tool; }
 	bool is_abstract() const override { return _is_abstract; }
-	virtual bool is_script_valid() const override { return valid; }
-	virtual const Variant get_rpc_config() const override;
-	CppScript() = default;
-	~CppScript() override = default;
+	virtual bool is_script_valid() const override { return path_valid && valid; }
+	CppScript();
+	const Variant get_rpc_config() const override { return Variant(); }
+	~CppScript() {
+		if (library_handle) {
+			OS::get_singleton()->close_dynamic_library(library_handle);
+			library_handle = nullptr;
+		}
+	}
 };

@@ -1,4 +1,47 @@
 #!/usr/bin/env python
+import hashlib, os, shutil, subprocess
+
+def build_sdk(target, source, env):
+    engine = source[0].abspath
+    sdk = os.path.abspath(str(target[0]))
+    work = os.path.join(os.path.dirname(sdk), "godot_cpp_build")
+    os.makedirs(work, exist_ok=True)
+    try:
+        subprocess.check_call(
+            [engine, "--headless", "--dump-extension-api",
+             "--dump-gdextension-interface", "--dump-gdextension-interface-json"],
+            cwd=work,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"godot-cpp SDK step failed: {e}")
+        return 1
+    h = hashlib.sha256()
+    for f in ("extension_api.json", "gdextension_interface.h"):
+        with open(os.path.join(work, f), "rb") as fh:
+            h.update(fh.read())
+    stamp = os.path.join(sdk, ".api_hash")
+    if os.path.exists(stamp) and open(stamp).read() == h.hexdigest():
+        return None
+    cpp = env.Dir("#modules/clang/thirdparty/godot-cpp").abspath
+    platform = {"linuxbsd": "linux"}.get(env["platform"], env["platform"])
+    subprocess.check_call(
+        ["scons", f"-j{env.GetOption('num_jobs')}", f"platform={platform}", "target=editor",
+         "use_llvm=yes", f"gdextension_dir={work}"],
+        cwd=cpp,
+    )
+    if os.path.isdir(sdk):
+        shutil.rmtree(sdk)
+    os.makedirs(os.path.join(sdk, "lib"))
+    os.makedirs(os.path.join(sdk, "gdextension"))
+    shutil.copytree(os.path.join(cpp, "include"), os.path.join(sdk, "include"))
+    shutil.copytree(os.path.join(cpp, "gen", "include"), os.path.join(sdk, "include"), dirs_exist_ok=True)
+    shutil.copy2(os.path.join(work, "gdextension_interface.h"), os.path.join(sdk, "gdextension"))
+    for lib in os.listdir(os.path.join(cpp, "bin")):
+        if lib.endswith(".a") and ".editor." in lib:
+            shutil.copy2(os.path.join(cpp, "bin", lib), os.path.join(sdk, "lib", "libgodot-cpp.a"))
+    shutil.copy2(env.File("#modules/clang/godot_cpp_sdk/godot.h").abspath, os.path.join(sdk, "include", "godot.h"))
+    with open(stamp, "w") as fh:
+        fh.write(h.hexdigest())
 from misc.utility.scons_hints import *
 
 Import("env")
@@ -7,3 +50,9 @@ Import("env_modules")
 env_clang = env_modules.Clone()
 
 env_clang.add_source_files(env.modules_sources, "*.cpp")
+if env.editor_build:
+    env_clang.add_source_files(env.modules_sources, "editor/*.cpp")
+    SConscript("editor/script_templates/SCsub")
+    sdk_node = env.Command("#bin/godot_cpp_sdk", "#bin/godot" + env["PROGSUFFIX"], Action(build_sdk, "Building godot-cpp SDK: $TARGET"))
+    env.AlwaysBuild(sdk_node)
+    Default(sdk_node)
